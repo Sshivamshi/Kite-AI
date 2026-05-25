@@ -531,3 +531,36 @@ def check_prompt(
     """Run InputGuard on a single merchant prompt."""
     guard = get_input_guard(scope_threshold=scope_threshold)
     return guard.check(merchant_text)
+
+
+def bypass_guard_result(merchant_text: str) -> GuardResult:
+    """
+    UI opt-in: skip scope embeddings and injection checks when Ollama embed
+    model is unavailable (e.g. Streamlit Cloud). Keeps length sanity only.
+    """
+    text = (merchant_text or "").strip()
+    t0 = time.perf_counter()
+    if len(text) < GUARD_MIN_LENGTH:
+        return GuardResult(
+            passed=False,
+            rejection_type="too_short",
+            rejection_reason=f"Input too short (minimum {GUARD_MIN_LENGTH} characters).",
+            scope_backend="bypassed",
+            embedding_available=False,
+            latency_ms=round((time.perf_counter() - t0) * 1000, 2),
+        )
+    if len(text) > GUARD_MAX_LENGTH:
+        return GuardResult(
+            passed=False,
+            rejection_type="too_long",
+            rejection_reason=f"Input too long (maximum {GUARD_MAX_LENGTH} characters). Please be concise.",
+            scope_backend="bypassed",
+            embedding_available=False,
+            latency_ms=round((time.perf_counter() - t0) * 1000, 2),
+        )
+    return GuardResult(
+        passed=True,
+        scope_backend="bypassed",
+        embedding_available=False,
+        latency_ms=round((time.perf_counter() - t0) * 1000, 2),
+    )

@@ -36,6 +36,7 @@ from stage0 import (
     SCOPE_CORPUS,
     SCOPE_EMBEDDING_MODEL,
     SCOPE_THRESHOLD,
+    bypass_guard_result,
     check_prompt,
 )
 from stage1 import (
@@ -430,6 +431,22 @@ st.caption("Stage 0 guard → Stage 1 classifier → Stage 2 IR builder")
 # ── Stage 0 ────────────────────────────────────────────────────────────────
 st.subheader("🛡️ Stage 0 — Input guard")
 
+bypass_stage0 = st.checkbox(
+    "Skip Stage 0 guard (send directly to Stage 1)",
+    value=st.session_state.get("bypass_stage0", False),
+    help=(
+        "Bypasses embedding scope checks and injection patterns. Use when Ollama "
+        f"embeddings are unavailable on this server (run `ollama pull {SCOPE_EMBEDDING_MODEL}` locally to enable the guard)."
+    ),
+    key="bypass_stage0",
+)
+
+if bypass_stage0:
+    st.info(
+        "Stage 0 guard is **off** — prompts go straight to Stage 1. "
+        "Only basic length checks (5–1000 characters) still apply."
+    )
+
 scope_threshold = st.slider(
     "Scope threshold",
     min_value=0.40,
@@ -437,6 +454,7 @@ scope_threshold = st.slider(
     value=SCOPE_THRESHOLD,
     step=0.05,
     help="Minimum cosine similarity to accept a prompt as promotion-related.",
+    disabled=bypass_stage0,
 )
 
 user_input = st.text_area(
@@ -447,15 +465,19 @@ user_input = st.text_area(
 
 col_send, col_clear = st.columns([1, 5])
 with col_send:
-    send = st.button("Run Stage 0", type="primary", use_container_width=True)
+    send_label = "Send to Stage 1" if bypass_stage0 else "Run Stage 0"
+    send = st.button(send_label, type="primary", use_container_width=True)
 with col_clear:
     if st.button("Clear Stage 0"):
         st.session_state.last_guard_result = None
         st.session_state.last_prompt = ""
 
 if send and user_input.strip():
-    with st.spinner("InputGuard…"):
-        result = check_prompt(user_input.strip(), scope_threshold=scope_threshold)
+    with st.spinner("InputGuard…" if not bypass_stage0 else "Sending to Stage 1…"):
+        if bypass_stage0:
+            result = bypass_guard_result(user_input.strip())
+        else:
+            result = check_prompt(user_input.strip(), scope_threshold=scope_threshold)
         st.session_state.last_guard_result = result
         st.session_state.last_prompt = user_input.strip()
         if result.passed:
@@ -470,10 +492,13 @@ if st.session_state.last_guard_result is not None:
     prompt = st.session_state.last_prompt
 
     if res.passed:
-        st.success(
-            f"**PASS** — sent to Stage 1  ·  "
-            f"best cosine **{res.scope_score:.0%}** (≥ {scope_threshold:.0%})"
-        )
+        if res.scope_backend == "bypassed":
+            st.warning("**BYPASS** — Stage 0 skipped; sent directly to Stage 1")
+        else:
+            st.success(
+                f"**PASS** — sent to Stage 1  ·  "
+                f"best cosine **{res.scope_score:.0%}** (≥ {scope_threshold:.0%})"
+            )
     else:
         verdict = res.rejection_type or "blocked"
         if verdict == "out_of_scope":
@@ -487,18 +512,19 @@ if st.session_state.last_guard_result is not None:
             st.error(f"**{verdict.upper()}**")
 
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Verdict", "pass" if res.passed else res.rejection_type)
-    m2.metric("Scope score", res.scope_score if res.scope_score is not None else "—")
-    m3.metric("Embeddings", res.scope_backend or "—")
+    m1.metric("Verdict", "bypass" if res.scope_backend == "bypassed" else ("pass" if res.passed else res.rejection_type))
+    m2.metric("Scope score", "—" if res.scope_backend == "bypassed" else (res.scope_score if res.scope_score is not None else "—"))
+    m3.metric("Embeddings", "bypassed" if res.scope_backend == "bypassed" else (res.scope_backend or "—"))
     m4.metric("Latency", f"{res.latency_ms} ms")
 
     if res.rejection_reason:
         st.info(res.rejection_reason)
 
-    if not res.embedding_available:
+    if not res.embedding_available and not bypass_stage0 and res.scope_backend != "bypassed":
         st.error(
             f"Ollama embeddings not available — ensure Ollama is running at "
-            f"`{OLLAMA_LOCAL_HOST}` and run `ollama pull {SCOPE_EMBEDDING_MODEL}`"
+            f"`{OLLAMA_LOCAL_HOST}` and run `ollama pull {SCOPE_EMBEDDING_MODEL}`, "
+            "or enable **Skip Stage 0 guard** above."
         )
 
     if res.scope_best_match:
@@ -515,7 +541,9 @@ st.divider()
 st.subheader("🤖 Stage 1 — Promotion chat")
 
 if not st.session_state.stage1_session:
-    st.caption("Pass Stage 0 to start chatting with the classifier.")
+    st.caption(
+        "Pass Stage 0, or enable **Skip Stage 0 guard** and submit your prompt, to start Stage 1."
+    )
 else:
     session = st.session_state.stage1_session
 
@@ -620,8 +648,10 @@ with st.expander("Pipeline reference"):
     st.markdown(f"""
 **Stage 0 checks (in order):**
 1. Length — min 5 / max 1000 characters
-2. Injection — compiled regex patterns
-3. Scope — embed prompt, max cosine vs all **{len(SCOPE_CORPUS)}** corpus sentences
+2. Injection — compiled regex patterns *(skipped when bypass enabled)*
+3. Scope — embed prompt, max cosine vs all **{len(SCOPE_CORPUS)}** corpus sentences *(skipped when bypass enabled)*
+
+**Bypass:** enable *Skip Stage 0 guard* when `ollama pull {SCOPE_EMBEDDING_MODEL}` is not available on the server.
 
 **Stage 1:** `{DEFAULT_MODEL}` — classifies promotion family; outputs handoff JSON.
 
