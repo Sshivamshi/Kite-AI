@@ -98,8 +98,9 @@ You must be 100% certain before pass. NEVER fill in, default, or guess:
   • Whether a number is a dollar amount, quantity, or product denomination
   • Whether "50 gift card" means a $50 gift card product vs buying 50 gift cards
   • Reward type when both free product and discount are plausible
-  • Family when free_gift vs buy_x_get_y is ambiguous → use gift_reward question
-    (gift items vs specific other product free). Never ask promotion family.
+  • Family when free_gift vs buy_x_get_y is ambiguous → use promotion_family question
+    FIRST (before confirm_intent or sub-questions). Tiered discount is separate — easy
+    to tell apart. Never ask "what happens to the extra item" before family is chosen.
 
 If anything could be read two ways → verdict = clarify with a specific
 question. Do NOT note assumptions in forwarded_prompt. Do NOT pass on
@@ -117,6 +118,7 @@ INTENT VERIFICATION — when to confirm vs pass immediately (STEP 6)
 ═══════════════════════════════════════════════════════════
 
 FULLY EXPLICIT PROMPT (pass on first message — NO confirm_intent):
+  ONLY after promotion_family is resolved (or promotion is tiered_discount).
   Merchant states in ONE message, with zero ambiguity:
     • trigger threshold (amount + currency, or quantity)
     • reward type and value (free product name, % off, tier values, etc.)
@@ -128,14 +130,14 @@ FULLY EXPLICIT PROMPT (pass on first message — NO confirm_intent):
   → Do NOT shorten to a one-line summary like "Spend $100 and get a free gift"
     when they said more (e.g. Sample Gift, all products, no segment restriction)
 
-SHORT BUT COMPLETE PROMPT (confirm once only):
-  Merchant gives a brief but unambiguous prompt ("Spend $100 and get a free gift")
-  with no missing fields → verdict = clarify with confirm_intent ONLY.
-  → proposed_prompt mirrors their wording; do not add unconfirmed details.
+SHORT BUT COMPLETE PROMPT:
+  Even brief prompts ("Spend $100 and get a free gift", "Buy 2 get 1 free") MUST
+  go through promotion_family FIRST (unless tiered_discount). Then confirm_intent
+  or pass — never skip the family question.
 
 INCOMPLETE OR AMBIGUOUS → clarify with specific questions (NOT confirm_intent):
-  Ask only about what is MISSING or AMBIGUOUS — threshold, reward, family,
-  currency symbol, units. Include suggested_promotions tailored to intent.
+  promotion_family is still FIRST for any non-tiered promotion; then ask threshold,
+  reward, currency, etc. as needed.
 
 UNSUPPORTED FLAGS PRESENT → unsupported (NOT clarify):
   Return flags, flag_reasons, suggestions (how to fix each flag), supported_alternative,
@@ -156,11 +158,26 @@ Every clarify response MUST include:
 
 Only return verdict = pass when:
   • All required fields explicit (Steps 1–4) AND
+  • promotion_family resolved for EVERY non-tiered promotion (merchant must choose
+    free_gift or buy_x_get_y before confirm_intent or pass)
   • Either merchant gave a FULLY EXPLICIT prompt on this or a prior turn, OR
   • Merchant confirmed ("yes", "correct") or pasted their complete intended prompt
 
 If unsure about ANYTHING material → clarify first with a specific question.
 Do NOT use confirm_intent when real ambiguity remains — ask the ambiguous field.
+
+MANDATORY promotion_family GATE (before confirm_intent, pass, or ANY other question):
+  For EVERY supported promotion that is NOT tiered_discount, ask promotion_family
+  FIRST with TWO suggested drafts (one free_gift, one buy_x_get_y).
+  This applies to ALL non-tiered cases — including "Spend $100 get a free gift",
+  "Buy 2 shirts get 1 cap free", "Buy three pants and get a pant", etc.
+  The merchant MUST choose free_gift or buy_x_get_y before you proceed.
+  Skip promotion_family ONLY when:
+    • tiered_discount is detected (multiple tiers, spend/quantity ladders, or
+      merchant/LLM clearly describes a tiered deal — handle tiered as today)
+    • Merchant already answered promotion_family in this conversation
+  FORBIDDEN: Skipping to confirm_intent, pass, or sub-questions before
+  promotion_family is resolved on non-tiered promotions.
 
 ═══════════════════════════════════════════════════════════
 EVOLVING DRAFT PROMPT — critical, every clarify turn
@@ -179,16 +196,20 @@ PRESERVE MERCHANT DETAIL — never collapse:
 RULES:
   1. Start from what the merchant said; refine each turn — never stay vague
      if they already answered a question.
-  2. When merchant confirms a detail ("yes" to "is 200 dollars?"):
+  2. When merchant confirms promotion_family answer:
+     → Free gift option → set family free_gift; use free_gift suggested draft
+     → Buy X Get Y option → set family buy_x_get_y; use buy_x_get_y suggested draft
+     → THEN ask confirm_intent or pass — never pass before promotion_family is resolved
+  3. When merchant confirms a detail ("yes" to "is 200 dollars?"):
      → IMMEDIATELY bake the answer in (e.g. "200" → "$200 USD")
      → Do NOT ask that same question again
      → Either ask the NEXT unresolved detail OR return pass if complete
-  3. suggested_promotions[0].prompt MUST equal proposed_prompt exactly.
-  4. Multi-condition promotions: resolve one ambiguity at a time.
+  4. suggested_promotions[0].prompt MUST equal proposed_prompt exactly.
+  5. Multi-condition promotions: resolve one ambiguity at a time.
      Example: cart subtotal + cart quantity → draft both once confirmed:
      "Spend over $200 with at least 2 items in the cart and get a free gift"
-  5. NEVER return the same question twice in a row if merchant answered it.
-  6. Bare numbers without currency → ask once; after "yes" to dollar amount,
+  6. NEVER return the same question twice in a row if merchant answered it.
+  7. Bare numbers without currency → ask once; after "yes" to dollar amount,
      use $ and USD (or stated currency) in proposed_prompt permanently.
 
 LOOP PREVENTION:
@@ -421,30 +442,42 @@ DECISION RULES:
      with NO named qualifying-vs-reward product pairing → free_gift
   3. "Get [specific product] free" after buying DIFFERENT qualifying products
      → buy_x_get_y (NOT free_gift just because reward is free)
-  4. If merchant could mean EITHER gift-list free_gift OR a different product free
-     after buying qualifying items → CLARIFY with gift_reward question (see below).
-     Do NOT ask merchant to choose "promotion family" or use internal family names.
+  4. If merchant could mean EITHER free_gift (threshold → promotional gift) OR
+     buy_x_get_y (buy X → get Y free/discounted) → CLARIFY with promotion_family
+     question (see below). Do NOT ask sub-questions about the reward item first.
 
-WHEN TO CLARIFY (free_gift vs buy_x_get_y):
-  Ask ONLY when reward is a free item but unclear which kind, e.g.:
-    • "Buy 3 shirts and get something free" (gift item vs specific product like pant?)
-    • "Buy items from selected list, get a free product" (gift catalog vs named product?)
-  Question id: gift_reward
-  Question (plain English — NO "promotion family", NO free_gift/buy_x_get_y labels):
-    "What should the customer receive for free?"
-  Options (exactly these two when disambiguating gift type):
-    • "A free gift from our gift items (samples, welcome gifts, mystery boxes, etc.)"
-    • "A specific other product for free (e.g. a pant, cap, or item they choose)"
+WHEN TO CLARIFY (free_gift vs buy_x_get_y) — MANDATORY promotion_family FIRST:
+  ALWAYS ask promotion_family for EVERY non-tiered promotion on the FIRST clarify
+  turn — no exceptions. Examples (all require promotion_family before anything else):
+    • "Spend $100 and get a free gift"
+    • "Buy 2 shirts get 1 cap free"
+    • "Buy 3 shirts and get a free tote"
+    • "Buy three pants and get a pant"
+  Skip promotion_family ONLY when:
+    • tiered_discount: multiple tiers, spend/quantity ladders, or merchant describes
+      a tiered deal (handle tiered flow as today — LLM can identify automatically)
+    • Merchant already answered promotion_family in this conversation
+  Question id: promotion_family
+  Question (plain English — NO internal family names):
+    "Which type of promotion do you want? Choose between a free gift reward
+    and a Buy X Get Y deal. (Tiered discount does not apply here.)"
+  Options:
+    • "Free gift — customer qualifies by buying/spending and receives a promotional free gift (samples, welcome gifts, etc.)"
+    • "Buy X Get Y — customer buys qualifying items and gets a specific product free or discounted (e.g. buy 3 pants, get 1 pant free)"
   Map answers internally:
-    • gift items option → free_gift family
-    • specific other product → buy_x_get_y family (free_y)
-  If reward could also be a discount (% or $ off) rather than free → use reward_type
-  question instead (separate from this gift_reward question).
+    • Free gift option → free_gift family; use free_gift suggested draft
+    • Buy X Get Y option → buy_x_get_y family; use buy_x_get_y suggested draft
+  suggested_promotions MUST include BOTH drafts — [0] matches proposed_prompt (default
+  buy_x_get_y draft), [1] is the free_gift draft. UI shows both side by side.
+  FORBIDDEN: Skipping promotion_family and asking confirm_intent or sub-questions
+  like "What should happen to the extra pant?" when family is still ambiguous.
+  If reward could be a discount (% or $ off) rather than free → use reward_type
+  question instead (separate from promotion_family).
 
-MERCHANT-FACING LANGUAGE for gift_reward clarify:
-  • NEVER say promotion family, free_gift, buy_x_get_y, tiered_discount in questions
-  • NEVER ask "What type of promotion is this?"
-  • ONLY ask which free reward: gift items vs other product
+MERCHANT-FACING LANGUAGE for promotion_family clarify:
+  • NEVER say free_gift, buy_x_get_y, tiered_discount as internal labels in questions
+  • Ask which promotion TYPE the merchant wants — free gift vs Buy X Get Y
+  • Show two suggested drafts so they can see each interpretation
 
 SIDE-BY-SIDE:
   free_gift                              buy_x_get_y
@@ -491,8 +524,8 @@ ALWAYS CLARIFY when:
   • No trigger threshold exists ("give customers a discount" — how much/many?)
   • No reward type exists ("spend $100+" — what do they get?)
   • Family cannot be determined from context ("give VIP a deal")
-  • Reward is free but unclear: gift from gift items vs a specific other product free
-    → ask gift_reward question (plain English). Do NOT ask promotion family.
+  • ANY non-tiered promotion → MUST ask promotion_family FIRST with two suggested
+    drafts. Never skip — even when family seems obvious from wording.
   • Single tier detected for tiered_discount ("buy 2 get 10%" — only one tier;
     that is buy_x_get_y, not tiered_discount)
   • Family unclear between buy_x_get_y and tiered_discount → apply
@@ -718,24 +751,43 @@ Output:
 {"verdict":"pass","forwarded_prompt":"Spend $100 and get a free gift","family":"free_gift","understood_intent":"Spend $100 and get a free gift"}
 
 ────────────────────────────────────────────────────────────
-[BUY X GET Y — distinct qualifying vs reward; NOT free_gift]
-User: "Buy three shirts in selected list and get a free pant"
-────────────────────────────────────────────────────────────
+[BUY X GET Y vs FREE GIFT — promotion_family required FIRST]
+User: "Buy three shirts in selected list and get a free tote"
 Reasoning:
-  Flags: none. Explicit X→Y: buy 3 shirts (qualifying) → free pant (reward).
-  Distinct products, single tier, free Y → buy_x_get_y (free_y). NOT free_gift.
+  Could be free_gift OR buy_x_get_y. MUST ask promotion_family with TWO drafts.
 Output:
-{"verdict":"clarify","understood_so_far":"Buy 3 shirts from a selected list and receive 1 free pant.","inferred_family":"buy_x_get_y","proposed_prompt":"Buy 3 shirts from selected list and get 1 free pant","questions":[{"id":"confirm_intent","question":"Is this what you want to set up?","options":["Yes, that's correct","No — I'll clarify further"]}],"suggested_promotions":[{"prompt":"Buy 3 shirts from selected list and get 1 free pant","family":"buy_x_get_y"},{"prompt":"Buy 2 shirts and get 1 cap free","family":"buy_x_get_y"},{"prompt":"Spend $100 and get a free gift","family":"free_gift"}]}
+{"verdict":"clarify","understood_so_far":"Buy 3 shirts from a selected list and receive a free tote.","inferred_family":"buy_x_get_y","proposed_prompt":"Buy 3 shirts from selected list and get a free tote","questions":[{"id":"promotion_family","question":"Which type of promotion do you want? Choose between a free gift reward and a Buy X Get Y deal.","options":["Free gift — customer qualifies by buying/spending and receives a promotional free gift (samples, welcome gifts, etc.)","Buy X Get Y — customer buys qualifying items and gets a specific product free or discounted (e.g. buy 3 shirts, get a free tote)"]}],"suggested_promotions":[{"prompt":"Buy 3 shirts from selected list and get a free tote","family":"buy_x_get_y"},{"prompt":"Buy 3 shirts from selected list and receive a free gift","family":"free_gift"}]}
 
 ────────────────────────────────────────────────────────────
-[AMBIGUOUS free gift vs specific product — gift_reward question, NOT promotion family]
-User: "Buy 3 items from my selected list and get something free"
-────────────────────────────────────────────────────────────
+[Buy pants get pant — promotion_family required, NOT sub-questions]
+User: "Buy three pants and get a pant"
 Reasoning:
-  Qualifying purchase clear; reward is free but gift-item vs specific product unknown.
-  Ask gift_reward only — do NOT ask promotion family or use internal labels.
+  Ambiguous free_gift vs buy_x_get_y. FORBIDDEN to ask "what should happen to the extra pant"
+  before promotion_family. Show both drafts.
 Output:
-{"verdict":"clarify","understood_so_far":"Buy 3 items from a selected list and receive something free.","inferred_family":"buy_x_get_y","proposed_prompt":"Buy 3 items from selected list and get a free reward","questions":[{"id":"gift_reward","question":"What should the customer receive for free?","options":["A free gift from our gift items (samples, welcome gifts, mystery boxes, etc.)","A specific other product for free (e.g. a pant, cap, or item they choose)"]}],"suggested_promotions":[{"prompt":"Buy 3 items from selected list and get a free gift from gift items","family":"free_gift"},{"prompt":"Buy 3 items from selected list and get 1 free pant","family":"buy_x_get_y"},{"prompt":"Buy 2 shirts and get 1 cap free","family":"buy_x_get_y"}]}
+{"verdict":"clarify","understood_so_far":"Buy three pants and receive an additional pant.","inferred_family":"buy_x_get_y","proposed_prompt":"Buy 3 pants and get 1 pant free","questions":[{"id":"promotion_family","question":"Which type of promotion do you want? Choose between a free gift reward and a Buy X Get Y deal.","options":["Free gift — customer qualifies by buying/spending and receives a promotional free gift (samples, welcome gifts, etc.)","Buy X Get Y — customer buys qualifying items and gets a specific product free or discounted (e.g. buy 3 pants, get 1 pant free)"]}],"suggested_promotions":[{"prompt":"Buy 3 pants and get 1 pant free","family":"buy_x_get_y"},{"prompt":"Buy 3 pants and receive a free gift","family":"free_gift"}]}
+
+────────────────────────────────────────────────────────────
+[After promotion_family answered — free_gift → then confirm_intent]
+User: (chose Free gift option)
+Output:
+{"verdict":"clarify","understood_so_far":"Buy 3 pants; customer receives a promotional free gift when they qualify.","inferred_family":"free_gift","proposed_prompt":"Buy 3 pants and receive a free gift","questions":[{"id":"confirm_intent","question":"Is this what you want to set up?","options":["Yes, that's correct","No — I'll clarify further"]}],"suggested_promotions":[{"prompt":"Buy 3 pants and receive a free gift","family":"free_gift"}]}
+
+────────────────────────────────────────────────────────────
+[BUY X GET Y — named free item, promotion_family required]
+User: "Buy three shirts in selected list and get a free pant"
+Reasoning:
+  MUST ask promotion_family before confirm_intent — show both drafts.
+Output:
+{"verdict":"clarify","understood_so_far":"Buy 3 shirts from a selected list and receive a free pant.","inferred_family":"buy_x_get_y","proposed_prompt":"Buy 3 shirts from selected list and get a free pant","questions":[{"id":"promotion_family","question":"Which type of promotion do you want? Choose between a free gift reward and a Buy X Get Y deal.","options":["Free gift — customer qualifies by buying/spending and receives a promotional free gift (samples, welcome gifts, etc.)","Buy X Get Y — customer buys qualifying items and gets a specific product free or discounted (e.g. buy 3 shirts, get a free pant)"]}],"suggested_promotions":[{"prompt":"Buy 3 shirts from selected list and get a free pant","family":"buy_x_get_y"},{"prompt":"Buy 3 shirts from selected list and receive a free gift","family":"free_gift"}]}
+
+────────────────────────────────────────────────────────────
+[AMBIGUOUS — promotion_family question with two suggested drafts]
+User: "Buy 3 items from my selected list and get something free"
+Reasoning:
+  Qualifying purchase clear; family unknown. Ask promotion_family only.
+Output:
+{"verdict":"clarify","understood_so_far":"Buy 3 items from a selected list and receive something free.","inferred_family":"buy_x_get_y","proposed_prompt":"Buy 3 items from selected list and get 1 free item","questions":[{"id":"promotion_family","question":"Which type of promotion do you want? Choose between a free gift reward and a Buy X Get Y deal.","options":["Free gift — customer qualifies by buying/spending and receives a promotional free gift (samples, welcome gifts, etc.)","Buy X Get Y — customer buys qualifying items and gets a specific product free or discounted"]}],"suggested_promotions":[{"prompt":"Buy 3 items from selected list and get 1 free item","family":"buy_x_get_y"},{"prompt":"Buy 3 items from selected list and receive a free gift","family":"free_gift"}]}
 
 ────────────────────────────────────────────────────────────
 [MULTI-TURN — ambiguous amount, merchant confirms currency]
@@ -1006,10 +1058,300 @@ def _explicit_prompt_score(text: str) -> int:
     return score
 
 
+_GIFT_ITEMS_CATALOG_NAMES = (
+    "sample gift", "mini sample pack", "mystery gift box", "free trial kit",
+    "complimentary gift", "welcome gift", "free tote bag", "gift hamper",
+)
+
+_PROMOTION_FAMILY_RESOLVED_MARKERS = (
+    "free gift — customer qualifies",
+    "buy x get y — customer buys",
+    "promotional free gift",
+    "buy x get y deal",
+    "free_gift",
+    "buy_x_get_y",
+)
+
+_PROMOTION_FAMILY_FREE_GIFT_OPTION = (
+    "Free gift — customer qualifies by buying/spending and receives a "
+    "promotional free gift (samples, welcome gifts, etc.)"
+)
+_PROMOTION_FAMILY_BXGY_OPTION = (
+    "Buy X Get Y — customer buys qualifying items and gets a specific "
+    "product free or discounted (e.g. buy 3 pants, get 1 pant free)"
+)
+
+_WORD_TO_NUM = {
+    "one": "1", "two": "2", "three": "3", "four": "4", "five": "5", "six": "6",
+}
+
+
+def conversation_text(session: "Stage1Session") -> str:
+    return " ".join(session.user_turns)
+
+
+def is_likely_tiered_discount(text: str) -> bool:
+    t = (text or "").strip().lower()
+    if not t:
+        return False
+    if "tiered" in t or ("tier" in t and "discount" in t):
+        return True
+    if re.search(r"\bspend\s+more\s+get\s+more\b", t):
+        return True
+    if len(re.findall(r"\d+\s*%\s*off", t)) >= 2:
+        return True
+    if len(re.findall(r"\bspend\s+\$?\d+", t)) >= 2:
+        return True
+    if len(re.findall(r"\bbuy\s+\d+.*?(?:get|receive).*?(?:\d+\s*%\s*off|\d+\s*off)", t)) >= 2:
+        return True
+    return False
+
+
+_PROMOTION_SIGNAL_RE = re.compile(
+    r"\b(?:buy|purchase|spend|subtotal|cart|order|get|receive|give|free|gift|"
+    r"discount|off|percent|sample|qualif|promo|deal|reward)\b",
+    re.I,
+)
+
+
+def is_tiered_promotion(text: str, session: Optional["Stage1Session"] = None) -> bool:
+    """True when the conversation is a tiered discount (skip promotion_family gate)."""
+    if is_likely_tiered_discount(text):
+        return True
+    if session:
+        last = session.last_result or {}
+        fam = (last.get("inferred_family") or last.get("family") or "").strip()
+        if fam == "tiered_discount":
+            return True
+    return False
+
+
+def is_non_tiered_promotion(
+    text: str,
+    session: Optional["Stage1Session"] = None,
+) -> bool:
+    """True for any supported non-tiered promotion — requires promotion_family first."""
+    t = (text or "").strip()
+    if not t:
+        return False
+    if any(m in t.lower() for m in _PROMOTION_FAMILY_RESOLVED_MARKERS):
+        return False
+    if is_tiered_promotion(t, session):
+        return False
+    return bool(_PROMOTION_SIGNAL_RE.search(t))
+
+
+def is_free_gift_vs_bxgy_ambiguous(text: str) -> bool:
+    """Backward-compatible alias — now True for all non-tiered promotions."""
+    return is_non_tiered_promotion(text)
+
+
+def build_family_draft_variants(text: str) -> tuple[str, str]:
+    """Return (free_gift_draft, buy_x_get_y_draft) for any non-tiered promotion."""
+    raw = (text or "").strip()
+    t = raw.lower()
+    if not raw:
+        return (
+            "Spend $100 and receive a free gift",
+            "Buy 2 items and get 1 item free",
+        )
+
+    spend_m = re.search(
+        r"(?:spend|subtotal|cart\s+(?:total|reaches|exceeds)|orders?\s+over)"
+        r"\s*(?:over|at least|reaches?|exceeds)?\s*\$?\s*(\d+)",
+        t,
+    )
+    if spend_m:
+        amount = spend_m.group(1)
+        free_gift = raw
+        if not re.search(r"\bfree\s+gift\b", t, re.I):
+            free_gift = re.sub(
+                r"(?:get|receive|give)\s+[^.]+$",
+                "receive a free gift",
+                raw,
+                flags=re.I,
+            ).strip()
+            if not re.search(r"\bfree\s+gift\b", free_gift, re.I):
+                free_gift = f"Spend ${amount} and receive a free gift"
+        bxgy = f"Spend ${amount} and get 10% off qualifying items"
+        return (
+            re.sub(r"\s+", " ", free_gift).strip(),
+            re.sub(r"\s+", " ", bxgy).strip(),
+        )
+
+    if not re.search(r"\b(?:buy|spend|cart|subtotal|order|get|receive)\b", t, re.I):
+        return (
+            "Spend $100 and receive a free gift",
+            "Buy 2 items and get 1 item free",
+        )
+
+    free_gift = re.sub(
+        r"\b(?:and\s+)?(?:get|receive|give)\s+(?:\d+\s+)?(?:a\s+|an\s+|the\s+)?(?:(?:free\s+)?[\w\s]+?)\s*$",
+        " and receive a free gift",
+        raw,
+        flags=re.I,
+    ).strip()
+    free_gift = re.sub(r"\s+", " ", free_gift)
+    if not re.search(r"\bfree\s+gift\b", free_gift, re.I):
+        free_gift = re.sub(r"\s+", " ", f"{raw.rstrip('.')} and receive a free gift")
+
+    bxgy = raw
+    m = re.search(
+        r"\b(?:buy|purchase)\s+(one|two|three|four|five|six|\d+)\s+([\w\s]+?)"
+        r"(?:\s+from|\s+in|\s+on|\s+and|\s+get|\s+receive|\s+give|$)",
+        raw,
+        re.I,
+    )
+    m2 = re.search(
+        r"\b(?:get|receive|give)\s+(?:\d+\s+)?(?:a\s+|an\s+|the\s+)?(?:(?:free\s+)?(\w+))",
+        raw,
+        re.I,
+    )
+    if m and m2:
+        qty = _WORD_TO_NUM.get(m.group(1).lower(), m.group(1))
+        qual = m.group(2).strip().rstrip(",")
+        reward = m2.group(1)
+        qual_words = qual.split()
+        product = qual_words[-1] if qual_words else "items"
+        if (
+            reward.rstrip("s").lower() == product.rstrip("s").lower()
+            or ("pant" in reward.lower() and "pant" in product.lower())
+        ):
+            bxgy = f"Buy {qty} {qual} and get 1 {reward} free"
+        else:
+            bxgy = f"Buy {qty} {qual} and get a free {reward}"
+    elif re.search(r"\bbuy\s+\d+\s+get\s+\d+\s+free\b", t):
+        bxgy = raw
+    elif "free" not in t and m2:
+        bxgy = re.sub(
+            r"\b(get|receive|give)\s+(a\s+|an\s+|the\s+)?(\w+)\s*$",
+            r"get a free \3",
+            raw,
+            count=1,
+            flags=re.I,
+        )
+    elif not re.search(r"\bbuy\b", t) or not re.search(r"\bget\b", t):
+        bxgy = re.sub(r"\s+", " ", f"{raw.rstrip('.')} — Buy X Get Y deal")
+
+    return re.sub(r"\s+", " ", free_gift).strip(), re.sub(r"\s+", " ", bxgy).strip()
+
+
+def parse_promotion_family_answer(text: str) -> Optional[str]:
+    """Returns 'free_gift' | 'buy_x_get_y' when the merchant picks a family."""
+    t = (text or "").strip().lower()
+    if not t:
+        return None
+    if t == _PROMOTION_FAMILY_FREE_GIFT_OPTION.lower() or t.startswith("free gift —"):
+        return "free_gift"
+    if t == _PROMOTION_FAMILY_BXGY_OPTION.lower() or t.startswith("buy x get y"):
+        return "buy_x_get_y"
+    if any(m in t for m in ("promotional free gift", "free gift promotion", "free gift reward")):
+        return "free_gift"
+    if any(m in t for m in ("buy x get y", "buy x get y deal", "specific product free")):
+        return "buy_x_get_y"
+    return None
+
+
+def promotion_family_resolved(session: "Stage1Session") -> bool:
+    if session.promotion_family_resolved:
+        return True
+    for turn in session.user_turns:
+        if parse_promotion_family_answer(turn):
+            return True
+    return False
+
+
+def needs_promotion_family_gate(session: "Stage1Session") -> bool:
+    if promotion_family_resolved(session):
+        return False
+    return is_non_tiered_promotion(conversation_text(session), session)
+
+
+def try_apply_promotion_family_answer(session: "Stage1Session", user_input: str) -> None:
+    choice = parse_promotion_family_answer(user_input)
+    if not choice:
+        return
+    session.promotion_family_resolved = True
+    session.promotion_family_choice = choice
+    free_draft, bxgy_draft = build_family_draft_variants(conversation_text(session))
+    draft = free_draft if choice == "free_gift" else bxgy_draft
+    label = "Free gift (free_gift)" if choice == "free_gift" else "Buy X Get Y (buy_x_get_y)"
+    session.history.append({
+        "role": "user",
+        "content": (
+            f"[SYSTEM NOTE: Merchant answered promotion_family: {label}. "
+            f"Set family={choice!r} and proposed_prompt={draft!r}. "
+            "Do NOT ask promotion_family again or ask sub-questions like "
+            "'what should happen to the extra pant'. Proceed with confirm_intent or pass.]"
+        ),
+    })
+
+
+def build_promotion_family_clarify(session: "Stage1Session", llm_result: dict) -> dict:
+    """Deterministic promotion_family clarify with two suggested drafts."""
+    conv = conversation_text(session)
+    free_gift_draft, bxgy_draft = build_family_draft_variants(conv)
+    understood = (llm_result.get("understood_so_far") or "").strip()
+    if not understood:
+        understood = "Your promotion involves qualifying purchases and a reward item."
+    clarified = {
+        "verdict": "clarify",
+        "understood_so_far": understood,
+        "inferred_family": "buy_x_get_y",
+        "proposed_prompt": bxgy_draft,
+        "questions": [{
+            "id": "promotion_family",
+            "question": (
+                "Which type of promotion do you want? Choose between a free gift "
+                "reward and a Buy X Get Y deal. (Tiered discount does not apply here.)"
+            ),
+            "options": [_PROMOTION_FAMILY_FREE_GIFT_OPTION, _PROMOTION_FAMILY_BXGY_OPTION],
+        }],
+        "suggested_promotions": [
+            {"prompt": bxgy_draft, "family": "buy_x_get_y"},
+            {"prompt": free_gift_draft, "family": "free_gift"},
+        ],
+    }
+    validate_result(clarified)
+    return clarified
+
+
+def enforce_promotion_family_gate(session: "Stage1Session", result: dict) -> dict:
+    """Block pass/confirm_intent/sub-questions until promotion_family is resolved."""
+    fam = (result.get("inferred_family") or result.get("family") or "").strip()
+    if fam == "tiered_discount":
+        return result
+    if is_tiered_promotion(conversation_text(session), session):
+        return result
+    if not needs_promotion_family_gate(session):
+        return result
+    if result.get("verdict") == "unsupported":
+        return result
+    questions = result.get("questions") or []
+    qids = [q.get("id") for q in questions]
+    if result.get("verdict") == "clarify" and qids == ["promotion_family"]:
+        return result
+    return build_promotion_family_clarify(session, result)
+
+
+# Backward-compatible aliases
+mentions_named_free_reward = is_free_gift_vs_bxgy_ambiguous
+gift_reward_resolved = promotion_family_resolved
+needs_gift_reward_gate = needs_promotion_family_gate
+try_apply_gift_reward_answer = try_apply_promotion_family_answer
+build_gift_reward_clarify = build_promotion_family_clarify
+enforce_gift_reward_gate = enforce_promotion_family_gate
+parse_gift_reward_answer = parse_promotion_family_answer
+
+
 def is_fully_explicit_prompt(text: str) -> bool:
     """Heuristic: merchant supplied enough detail to pass without confirm_intent."""
     t = (text or "").strip().lower()
     if len(t.split()) < 18:
+        return False
+    if is_non_tiered_promotion(text) and not any(
+        m in t for m in _PROMOTION_FAMILY_RESOLVED_MARKERS
+    ):
         return False
     has_currency = any(x in t for x in ("usd", "gbp", "inr", "eur", "aud", "$", "currency"))
     has_threshold = any(x in t for x in ("$", "spend", "subtotal", "buy ", "cart", "reach"))
@@ -1183,6 +1525,10 @@ class Stage1Session:
     from_suggestion: bool = False
     last_result: Optional[dict] = None
     pending_alternative: Optional[str] = None
+    gift_reward_resolved: bool = False
+    gift_reward_family: Optional[str] = None
+    promotion_family_resolved: bool = False
+    promotion_family_choice: Optional[str] = None
 
 
 def md_escape(text: str) -> str:
@@ -1223,7 +1569,23 @@ def format_clarify_message(result: dict) -> str:
         qtext = (q.get("question") or "").strip()
         if qtext:
             parts.append(qtext)
+        for i, opt in enumerate(q.get("options") or [], 1):
+            if opt.strip():
+                parts.append(f"{i}. {opt.strip()}")
     return "\n\n".join(parts).strip()
+
+
+def get_promotion_family_question(result: dict) -> Optional[dict]:
+    """Return the promotion_family question dict if present in a clarify result."""
+    for q in result.get("questions") or []:
+        if q.get("id") in ("promotion_family", "gift_reward"):
+            return q
+    return None
+
+
+def get_gift_reward_question(result: dict) -> Optional[dict]:
+    """Backward-compatible alias for get_promotion_family_question."""
+    return get_promotion_family_question(result)
 
 
 def format_unsupported_message(result: dict) -> str:
@@ -1278,7 +1640,22 @@ class Stage1Classifier:
         session.history.append({"role": "user", "content": user_input})
         session.clarification_rounds += 1
 
+        try_apply_promotion_family_answer(session, user_input)
+
         cleaned_input = strip_confirmation_suffix(user_input)
+
+        if needs_promotion_family_gate(session):
+            session.history.append({
+                "role": "user",
+                "content": (
+                    "[SYSTEM NOTE: This is a non-tiered promotion. You MUST ask "
+                    "promotion_family FIRST with TWO suggested drafts (free_gift and "
+                    "buy_x_get_y). Applies to ALL non-tiered cases — do NOT skip even "
+                    "if family seems obvious. FORBIDDEN to go to confirm_intent, pass, "
+                    "or sub-questions first. Tiered discount only: skip family question. "
+                    f"Merchant said: {cleaned_input[:120]}…]"
+                ),
+            })
 
         if is_fully_explicit_prompt(cleaned_input) and session.clarification_rounds == 1:
             session.history.append({
@@ -1313,6 +1690,7 @@ class Stage1Classifier:
             is_intent_restatement(user_input)
             and session.last_result
             and session.last_result.get("verdict") == "clarify"
+            and not needs_promotion_family_gate(session)
         ):
             session.history.append({
                 "role": "user",
@@ -1369,6 +1747,12 @@ class Stage1Classifier:
                     error=error,
                     clarification_rounds=session.clarification_rounds,
                 )
+
+        result = enforce_promotion_family_gate(session, result)
+        family_choice = session.promotion_family_choice or session.gift_reward_family
+        if family_choice and result.get("verdict") == "pass":
+            result = dict(result)
+            result["family"] = family_choice
 
         session.history.append({"role": "assistant", "content": json.dumps(result)})
         session.last_result = result
@@ -1453,6 +1837,10 @@ def session_to_dict(session: Stage1Session) -> Dict[str, Any]:
         "from_suggestion": session.from_suggestion,
         "last_result": session.last_result,
         "pending_alternative": session.pending_alternative,
+        "gift_reward_resolved": session.promotion_family_resolved,
+        "gift_reward_family": session.promotion_family_choice,
+        "promotion_family_resolved": session.promotion_family_resolved,
+        "promotion_family_choice": session.promotion_family_choice,
     }
 
 
@@ -1472,6 +1860,16 @@ def session_from_dict(data: Dict[str, Any]) -> Stage1Session:
         from_suggestion=bool(data.get("from_suggestion")),
         last_result=data.get("last_result"),
         pending_alternative=data.get("pending_alternative"),
+        gift_reward_resolved=bool(
+            data.get("promotion_family_resolved") or data.get("gift_reward_resolved")
+        ),
+        gift_reward_family=data.get("promotion_family_choice") or data.get("gift_reward_family"),
+        promotion_family_resolved=bool(
+            data.get("promotion_family_resolved") or data.get("gift_reward_resolved")
+        ),
+        promotion_family_choice=(
+            data.get("promotion_family_choice") or data.get("gift_reward_family")
+        ),
     )
 
 

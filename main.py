@@ -45,6 +45,9 @@ from stage1 import (
     format_pass_message,
     format_unsupported_message,
     get_draft_prompt,
+    get_gift_reward_question,
+    get_promotion_family_question,
+    get_suggested_promotions,
     session_from_dict as stage1_session_from_dict,
     session_to_dict as stage1_session_to_dict,
 )
@@ -307,6 +310,26 @@ def _stage1_status_label(status: str, last_verdict: str | None) -> str:
     return "Active"
 
 
+def _render_stage1_promotion_family_form(last_result: dict, *, key_prefix: str) -> None:
+    """Radio picker when Stage 1 needs free_gift vs buy_x_get_y clarification."""
+    pf_q = get_promotion_family_question(last_result)
+    if not pf_q:
+        return
+    options = [o.strip() for o in (pf_q.get("options") or []) if o and o.strip()]
+    if len(options) < 2:
+        return
+    st.caption("Choose the promotion type:")
+    with st.form(f"{key_prefix}_promotion_family_form"):
+        choice = st.radio(
+            "Promotion type",
+            options,
+            label_visibility="collapsed",
+        )
+        if st.form_submit_button("Submit choice", type="primary", use_container_width=True):
+            st.session_state.stage1_quick_reply = choice
+            st.rerun()
+
+
 def _render_chat_message(msg: dict, *, show_draft_action: bool = False, action_key: str = "") -> None:
     st.write(msg["content"])
 
@@ -314,22 +337,36 @@ def _render_chat_message(msg: dict, *, show_draft_action: bool = False, action_k
     verdict = msg.get("verdict")
 
     if verdict == "clarify":
-        draft = get_draft_prompt(result)
-        if draft:
-            family = (result.get("inferred_family") or "").strip()
-            label = FAMILY_LABELS.get(family, "") if family else ""
-            caption = "Draft promotion"
-            if label:
-                caption += f" · {label}"
-            st.caption(caption + " *(updates each turn)*")
-            st.code(draft, language=None)
-            if show_draft_action and st.button(
-                "Use this draft",
-                key=f"{action_key}_use_draft",
-                use_container_width=True,
-            ):
-                st.session_state.stage1_quick_reply = "yes"
-                st.rerun()
+        pf_q = get_promotion_family_question(result)
+        promos = get_suggested_promotions(result)
+        if pf_q and len(promos) >= 2:
+            bxgy = next((p for p in promos if p.get("family") == "buy_x_get_y"), promos[0])
+            fg = next((p for p in promos if p.get("family") == "free_gift"), promos[-1])
+            st.caption("Suggested drafts for each option *(pick one above)*")
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown(f"**{FAMILY_LABELS.get('buy_x_get_y', 'Buy X Get Y')}**")
+                st.code(bxgy.get("prompt", ""), language=None)
+            with c2:
+                st.markdown(f"**{FAMILY_LABELS.get('free_gift', 'Free gift')}**")
+                st.code(fg.get("prompt", ""), language=None)
+        else:
+            draft = get_draft_prompt(result)
+            if draft:
+                family = (result.get("inferred_family") or "").strip()
+                label = FAMILY_LABELS.get(family, "") if family else ""
+                caption = "Draft promotion"
+                if label:
+                    caption += f" · {label}"
+                st.caption(caption + " *(updates each turn)*")
+                st.code(draft, language=None)
+                if show_draft_action and st.button(
+                    "Use this draft",
+                    key=f"{action_key}_use_draft",
+                    use_container_width=True,
+                ):
+                    st.session_state.stage1_quick_reply = "yes"
+                    st.rerun()
 
     elif verdict == "unsupported":
         draft = get_draft_prompt(result) or (result.get("supported_alternative") or "").strip()
@@ -581,6 +618,13 @@ else:
             )
 
     if not _get_stage2_payload():
+        last_result = (
+            chat[last_assistant_idx].get("result")
+            if last_assistant_idx >= 0 and chat[last_assistant_idx].get("verdict") == "clarify"
+            else None
+        )
+        if last_result:
+            _render_stage1_promotion_family_form(last_result, key_prefix="stage1_active")
         reply = st.chat_input("Message…")
         if reply:
             _send_stage1_message(reply.strip())
