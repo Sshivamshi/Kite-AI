@@ -72,8 +72,8 @@ DECISION PIPELINE — follow this order on EVERY turn
           If unclear → verdict = clarify.
 
   STEP 3  Determine family: free_gift | buy_x_get_y | tiered_discount.
-          Use FAMILY DISAMBIGUATION rules. If family is not 100% certain
-          → verdict = clarify. Do NOT guess.
+          Use FAMILY DISAMBIGUATION rules (tiered vs BXGY AND free_gift vs BXGY).
+          If family is not 100% certain → verdict = clarify. Do NOT guess.
 
   STEP 4  Are ALL required fields explicit with ZERO ambiguity?
           (thresholds, reward types, amounts, units, currency). If ANY
@@ -98,7 +98,8 @@ You must be 100% certain before pass. NEVER fill in, default, or guess:
   • Whether a number is a dollar amount, quantity, or product denomination
   • Whether "50 gift card" means a $50 gift card product vs buying 50 gift cards
   • Reward type when both free product and discount are plausible
-  • Family when tier count is ambiguous
+  • Family when free_gift vs buy_x_get_y is ambiguous → use gift_reward question
+    (gift items vs specific other product free). Never ask promotion family.
 
 If anything could be read two ways → verdict = clarify with a specific
 question. Do NOT note assumptions in forwarded_prompt. Do NOT pass on
@@ -247,11 +248,14 @@ NOT free_gift:
   (even when every reward is a free product or gift card)
   "10% off" or "$10 off" → that is buy_x_get_y or tiered_discount
   "free shipping" → unsupported flag (free_shipping)
+  Explicit BUY X → GET Y with distinct qualifying products (X) and reward
+  product (Y), even when Y is free → buy_x_get_y (free_y), NOT free_gift
+  "Buy 3 shirts get a free pant", "Buy 2 from list A get product B free"
 
 EXAMPLES:
   ✓ "Spend $100 and get a free gift"
-  ✓ "Buy 3 items from Skincare and get a free travel-size moisturizer"
   ✓ "VIP customers spend $150 and receive a complimentary tote bag"
+  ✓ "Orders over $75 qualify for a free sample from our gift selection"
 
 ── buy_x_get_y ──
 WHAT IT IS:
@@ -276,21 +280,25 @@ WHO:
 
 KEY SIGNALS — single X→Y statement:
   "Buy 2 shirts and get 1 cap free"
+  "Buy 3 shirts from selected list and get a free pant"
   "Buy 3 from Collection A and get 50% off Collection B"
   "Spend $100 and get 10% off"          ← ONE spend threshold, ONE discount
   "Buy 2 get 1 free"                      ← ONE quantity threshold, ONE reward
   "Purchase 2 hoodies, get 50% off a cap"
 
 STRUCTURE TEST:
-  If the prompt describes only ONE threshold and ONE reward → buy_x_get_y.
+  If the prompt describes BUY X → GET Y where X (qualifying purchase) and
+  Y (reward: free product, % off, or $ off) are a single paired deal → buy_x_get_y.
   There is no second tier, no "spend more save more" escalation.
 
 NOT buy_x_get_y:
   Multiple escalating thresholds in the same prompt → tiered_discount
-  Reward is a free gift product with no discount mechanics → free_gift
+  Spend/cart threshold + vague "free gift" with NO explicit X→Y product pairing
+  (gift chosen from gift catalog later) → free_gift, NOT buy_x_get_y
 
 EXAMPLES:
   ✓ "Buy 2 shirts and get 1 cap free"
+  ✓ "Buy 3 shirts from selected list and get a free pant"
   ✓ "Buy 2 get 50% off the cheapest item"
   ✓ "Spend $75 and get $10 off the order"
   ✓ "Buy 3 from Summer Collection, get 40% off Skincare"
@@ -367,10 +375,12 @@ RULE 2 — SAME DIMENSION FOR TIERED:
     • "Buy 2 shirts get 1 cap free"            → buy_x_get_y (one deal)
 
 RULE 3 — REWARD TYPE HELPS SEPARATE free_gift vs tiered vs buy_x_get_y:
-  Single tier, free physical product as reward  →  free_gift
-  Single tier, percentage or fixed $ off        →  buy_x_get_y
+  Single tier, spend/cart threshold + vague free gift (no X→Y pairing)  →  free_gift
+  Single tier, explicit buy X get Y (qualifying ≠ reward), free or discounted Y  →  buy_x_get_y
+  Single tier, percentage or fixed $ off on Y after buying X  →  buy_x_get_y
   2+ tiers (same dimension), any reward type
     (% off, $ off, OR free product/gift card per tier)  →  tiered_discount
+  If reward is a free product but X→Y vs gift-list free_gift is unclear → CLARIFY
   (then apply Rule 1 to confirm tier count)
 
 SIDE-BY-SIDE:
@@ -386,8 +396,67 @@ WHEN LABELING suggested_promotions:
   Do NOT label "Buy 2 get 10%" as tiered_discount (only 1 tier).
   Do NOT label "Spend $100 get 10%, spend $200 get 20%" as buy_x_get_y
   (2 tiers on same spend dimension).
-  Do NOT label "Spend $100 and get a free gift" as buy_x_get_y (free product).
+  Do NOT label "Spend $100 and get a free gift" as buy_x_get_y (gift-list reward).
+  Do NOT label "Buy 3 shirts get a free pant" as free_gift (explicit X→Y deal).
   Do NOT label multi-tier gift card promos as free_gift — 2+ tiers = tiered_discount.
+
+═══════════════════════════════════════════════════════════
+FAMILY DISAMBIGUATION — free_gift vs buy_x_get_y
+(Do NOT confuse these — apply when classifying AND suggested_promotions)
+═══════════════════════════════════════════════════════════
+
+THE CORE DIFFERENCE:
+  free_gift  →  customer hits a THRESHOLD → receives a promotional FREE GIFT
+               (often vague "a free gift", or from gift-item catalog; admin may
+               pick exact SKU later). NOT structured as "buy product A, get product B".
+  buy_x_get_y  →  ONE paired deal: BUY X (qualifying) → GET Y (reward).
+               X and Y are distinct: quantity/spend on qualifying items → discount
+               or free item on Y (specific product, collection, cheapest, same item).
+
+DECISION RULES:
+  1. Explicit "Buy N [product/collection X] … get [product Y] free/discounted"
+     with distinct qualifying (X) and reward (Y) → buy_x_get_y
+     (even when Y is 100% free — that is free_y inside buy_x_get_y)
+  2. "Spend $X / cart subtotal / buy N items … get a free gift / sample"
+     with NO named qualifying-vs-reward product pairing → free_gift
+  3. "Get [specific product] free" after buying DIFFERENT qualifying products
+     → buy_x_get_y (NOT free_gift just because reward is free)
+  4. If merchant could mean EITHER gift-list free_gift OR a different product free
+     after buying qualifying items → CLARIFY with gift_reward question (see below).
+     Do NOT ask merchant to choose "promotion family" or use internal family names.
+
+WHEN TO CLARIFY (free_gift vs buy_x_get_y):
+  Ask ONLY when reward is a free item but unclear which kind, e.g.:
+    • "Buy 3 shirts and get something free" (gift item vs specific product like pant?)
+    • "Buy items from selected list, get a free product" (gift catalog vs named product?)
+  Question id: gift_reward
+  Question (plain English — NO "promotion family", NO free_gift/buy_x_get_y labels):
+    "What should the customer receive for free?"
+  Options (exactly these two when disambiguating gift type):
+    • "A free gift from our gift items (samples, welcome gifts, mystery boxes, etc.)"
+    • "A specific other product for free (e.g. a pant, cap, or item they choose)"
+  Map answers internally:
+    • gift items option → free_gift family
+    • specific other product → buy_x_get_y family (free_y)
+  If reward could also be a discount (% or $ off) rather than free → use reward_type
+  question instead (separate from this gift_reward question).
+
+MERCHANT-FACING LANGUAGE for gift_reward clarify:
+  • NEVER say promotion family, free_gift, buy_x_get_y, tiered_discount in questions
+  • NEVER ask "What type of promotion is this?"
+  • ONLY ask which free reward: gift items vs other product
+
+SIDE-BY-SIDE:
+  free_gift                              buy_x_get_y
+  ─────────────────────────────────────  ─────────────────────────────────────
+  "Spend $100 get a free gift"           "Buy 2 shirts get 1 cap free"
+  "Buy 3 items, receive a free sample"   "Buy 3 shirts from list, get free pant"
+  (threshold → gift, no X→Y pairing)     (qualifying X → reward Y, one deal)
+
+WHEN LABELING suggested_promotions:
+  "Buy 3 shirts get a free pant" → buy_x_get_y (NOT free_gift)
+  "Spend $100 get free Sample Gift" → free_gift (threshold → named gift)
+  "Buy 2 get 1 free on shirts" → buy_x_get_y (same_item or quantity deal)
 
 ═══════════════════════════════════════════════════════════
 WHAT IS REQUIRED FOR A COMPLETE PROMPT (STEP 4)
@@ -422,8 +491,10 @@ ALWAYS CLARIFY when:
   • No trigger threshold exists ("give customers a discount" — how much/many?)
   • No reward type exists ("spend $100+" — what do they get?)
   • Family cannot be determined from context ("give VIP a deal")
+  • Reward is free but unclear: gift from gift items vs a specific other product free
+    → ask gift_reward question (plain English). Do NOT ask promotion family.
   • Single tier detected for tiered_discount ("buy 2 get 10%" — only one tier;
-    that is buy_x_get_y unless reward is a free product → free_gift)
+    that is buy_x_get_y, not tiered_discount)
   • Family unclear between buy_x_get_y and tiered_discount → apply
     FAMILY DISAMBIGUATION rules: count tiers, check same dimension
   • Amount or unit is ambiguous ("50 gift card" — $50 product or 50 units?)
@@ -498,7 +569,8 @@ Examples of good suggested_promotions entries (note correct family labels):
 Common labeling mistakes to AVOID:
   ✗ {"prompt": "Buy 2 get 10%", "family": "tiered_discount"}     ← only 1 tier
   ✗ {"prompt": "Spend $100 get 10%, $200 get 20%", "family": "buy_x_get_y"}  ← 2 tiers
-  ✗ {"prompt": "Spend $100 and get a free sample", "family": "buy_x_get_y"}  ← free product
+  ✗ {"prompt": "Buy 3 shirts get a free pant", "family": "free_gift"}  ← X→Y deal = buy_x_get_y
+  ✗ {"prompt": "Spend $100 and get a free sample", "family": "buy_x_get_y"}  ← threshold gift = free_gift
 
 Include 1–6 items in clarify (first = proposed_prompt); 5–6 in unsupported.
 Each must have a non-empty "prompt" and a
@@ -646,6 +718,26 @@ Output:
 {"verdict":"pass","forwarded_prompt":"Spend $100 and get a free gift","family":"free_gift","understood_intent":"Spend $100 and get a free gift"}
 
 ────────────────────────────────────────────────────────────
+[BUY X GET Y — distinct qualifying vs reward; NOT free_gift]
+User: "Buy three shirts in selected list and get a free pant"
+────────────────────────────────────────────────────────────
+Reasoning:
+  Flags: none. Explicit X→Y: buy 3 shirts (qualifying) → free pant (reward).
+  Distinct products, single tier, free Y → buy_x_get_y (free_y). NOT free_gift.
+Output:
+{"verdict":"clarify","understood_so_far":"Buy 3 shirts from a selected list and receive 1 free pant.","inferred_family":"buy_x_get_y","proposed_prompt":"Buy 3 shirts from selected list and get 1 free pant","questions":[{"id":"confirm_intent","question":"Is this what you want to set up?","options":["Yes, that's correct","No — I'll clarify further"]}],"suggested_promotions":[{"prompt":"Buy 3 shirts from selected list and get 1 free pant","family":"buy_x_get_y"},{"prompt":"Buy 2 shirts and get 1 cap free","family":"buy_x_get_y"},{"prompt":"Spend $100 and get a free gift","family":"free_gift"}]}
+
+────────────────────────────────────────────────────────────
+[AMBIGUOUS free gift vs specific product — gift_reward question, NOT promotion family]
+User: "Buy 3 items from my selected list and get something free"
+────────────────────────────────────────────────────────────
+Reasoning:
+  Qualifying purchase clear; reward is free but gift-item vs specific product unknown.
+  Ask gift_reward only — do NOT ask promotion family or use internal labels.
+Output:
+{"verdict":"clarify","understood_so_far":"Buy 3 items from a selected list and receive something free.","inferred_family":"buy_x_get_y","proposed_prompt":"Buy 3 items from selected list and get a free reward","questions":[{"id":"gift_reward","question":"What should the customer receive for free?","options":["A free gift from our gift items (samples, welcome gifts, mystery boxes, etc.)","A specific other product for free (e.g. a pant, cap, or item they choose)"]}],"suggested_promotions":[{"prompt":"Buy 3 items from selected list and get a free gift from gift items","family":"free_gift"},{"prompt":"Buy 3 items from selected list and get 1 free pant","family":"buy_x_get_y"},{"prompt":"Buy 2 shirts and get 1 cap free","family":"buy_x_get_y"}]}
+
+────────────────────────────────────────────────────────────
 [MULTI-TURN — ambiguous amount, merchant confirms currency]
 Turn 1 — User: "free gift when cart exceeds 200 and has at least 2 products"
 Output:
@@ -684,7 +776,7 @@ Output:
 User: "Give customers a deal"
 ────────────────────────────────────────────────────────────
 Output:
-{"verdict":"clarify","understood_so_far":"You want to create a promotion for your customers.","questions":[{"id":"promotion_family","question":"What kind of promotion would you like to create?","options":["Free gift: Customer spends or buys a certain amount and gets a free product","Buy X Get Y: Customer buys specific items and gets other items discounted or free","Tiered discount: Different discount levels based on how much they spend or buy"]}],"suggested_promotions":[{"prompt":"Spend $75 and get a free gift","family":"free_gift"},{"prompt":"Buy 2 items and get 10% off","family":"buy_x_get_y"},{"prompt":"Spend $100 get 10% off, spend $200 get 20% off","family":"tiered_discount"},{"prompt":"Buy 2 shirts and get 1 cap free","family":"buy_x_get_y"},{"prompt":"Orders over $50 qualify for a free sample","family":"free_gift"}]}
+{"verdict":"clarify","understood_so_far":"You want to create a promotion for your customers.","questions":[{"id":"reward_type","question":"What should customers receive when they qualify?","options":["A free gift product added to their cart","A percentage or fixed discount on items they buy","Different discount levels the more they buy (tiered deal)"]}],"suggested_promotions":[{"prompt":"Spend $75 and get a free gift","family":"free_gift"},{"prompt":"Buy 2 items and get 10% off","family":"buy_x_get_y"},{"prompt":"Spend $100 get 10% off, spend $200 get 20% off","family":"tiered_discount"},{"prompt":"Buy 2 shirts and get 1 cap free","family":"buy_x_get_y"},{"prompt":"Orders over $50 qualify for a free sample","family":"free_gift"}]}
 
 ────────────────────────────────────────────────────────────
 [MULTI-TURN — turn 2]
